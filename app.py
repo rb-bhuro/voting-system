@@ -327,6 +327,8 @@ def get_candidates(election_id):
 # Voting
 # ----------------------------------------
 
+from pytz import timezone  # ✅ Add this at the top of your file
+
 @app.route('/vote', methods=['POST'])
 def vote():
     data = request.get_json()
@@ -362,7 +364,13 @@ def vote():
     start = parse_datetime(election['start_time'])
     end = parse_datetime(election['end_time'])
 
-    if not (start <= datetime.now() <= end):
+    # ✅ Use current time in IST (India time)
+    now_ist = datetime.now(timezone('Asia/Kolkata'))
+
+    # ✅ Optional debug logs (remove in production)
+    print(f"[DEBUG] start: {start}, end: {end}, now: {now_ist}")
+
+    if not (start <= now_ist <= end):
         return jsonify({'status': 'error', 'message': 'Election not active'}), 403
 
     cursor.execute('SELECT * FROM votes WHERE user_id = ? AND election_id = ?', (user_id, election_id))
@@ -372,6 +380,7 @@ def vote():
     cursor.execute('INSERT INTO votes (user_id, election_id, candidate_id) VALUES (?, ?, ?)', (user_id, election_id, candidate_id))
     db.commit()
     return jsonify({'status': 'success', 'message': 'Vote submitted'})
+
 
 @app.route('/results/<int:election_id>', methods=['GET'])
 def election_results(election_id):
