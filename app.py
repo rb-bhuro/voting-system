@@ -9,22 +9,18 @@ import os
 app = Flask(__name__)
 DATABASE = 'database.db'
 
-# ✅ CORS
+
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
 
-# ✅ Email Config
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
 app.config['MAIL_USERNAME'] = 'omrangani99@gmail.com'
-app.config['MAIL_PASSWORD'] = 'kgdg alxx mmch gqwa'  # Gmail App Password
+app.config['MAIL_PASSWORD'] = 'kgdg alxx mmch gqwa'  
 
 mail = Mail(app)
 
-# ----------------------------------------
-# DB Connection
-# ----------------------------------------
 
 def get_db():
     if 'db' not in g:
@@ -38,9 +34,6 @@ def close_db(exception):
     if db:
         db.close()
 
-# ----------------------------------------
-# Init DB
-# ----------------------------------------
 
 @app.route('/init-db', methods=['GET'])
 def init_db():
@@ -56,40 +49,47 @@ def init_db():
 def home():
     return 'Voting System API is running!'
 
-# ----------------------------------------
-# Registration & Role Check
-# ----------------------------------------
-
 @app.route('/register', methods=['POST'])
 def register():
-    data = request.get_json()
-    name = data.get('name')
-    email = data.get('email')
-    phone = data.get('phone')
+    try:
+        data = request.get_json()
+        print("Register data received:", data)  
 
-    if not all([name, email, phone]):
-        return jsonify({'status': 'error', 'message': 'Missing required fields'}), 400
+        name = data.get('name')
+        email = data.get('email')
+        phone = data.get('phone')
 
-    db = get_db()
-    cursor = db.cursor()
+        if not all([name, email, phone]):
+            return jsonify({'status': 'error', 'message': 'Missing required fields'}), 400
 
-    cursor.execute('SELECT COUNT(*) as count FROM users')
-    user_count = cursor.fetchone()['count']
+        db = get_db()
+        cursor = db.cursor()
 
-    cursor.execute('SELECT * FROM users WHERE email = ? OR phone = ?', (email, phone))
-    user = cursor.fetchone()
+        cursor.execute('SELECT COUNT(*) as count FROM users')
+        user_count = cursor.fetchone()['count']
 
-    if user:
-        cursor.execute('UPDATE users SET name = ? WHERE id = ?', (name, user['id']))
-        db.commit()
-        user_id = user['id']
-    else:
-        is_admin = 1 if user_count == 0 else 0
-        cursor.execute('INSERT INTO users (name, email, phone, is_admin) VALUES (?, ?, ?, ?)', (name, email, phone, is_admin))
-        db.commit()
-        user_id = cursor.lastrowid
+        cursor.execute('SELECT * FROM users WHERE email = ? OR phone = ?', (email, phone))
+        user = cursor.fetchone()
 
-    return jsonify({'status': 'success', 'user_id': user_id})
+        if user:
+            cursor.execute('UPDATE users SET name = ? WHERE id = ?', (name, user['id']))
+            db.commit()
+            user_id = user['id']
+        else:
+            is_admin = 1 if user_count == 0 else 0
+            cursor.execute(
+                'INSERT INTO users (name, email, phone, is_admin) VALUES (?, ?, ?, ?)',
+                (name, email, phone, is_admin)
+            )
+            db.commit()
+            user_id = cursor.lastrowid
+
+        return jsonify({'status': 'success', 'user_id': user_id})
+
+    except Exception as e:
+        print("Error in /register:", e) 
+        return jsonify({'status': 'error', 'message': 'An unexpected error occurred'}), 500
+
 
 
 @app.route('/check-admin')
@@ -124,7 +124,7 @@ def get_user_role():
 @app.route('/get-user', methods=['POST', 'OPTIONS'])
 def get_user():
     if request.method == 'OPTIONS':
-        return '', 200  # Handle preflight CORS check
+        return '', 200 
     
     data = request.get_json()
     email = data.get('email')
@@ -142,9 +142,7 @@ def get_user():
 
     return jsonify({'status': 'success', 'user_id': user['id']})
 
-# ----------------------------------------
-# OTP Logic
-# ----------------------------------------
+
 
 @app.route('/send-otp', methods=['POST'])
 def send_otp():
@@ -160,8 +158,9 @@ def send_otp():
     user = cursor.fetchone()
 
     if not user:
-        # Auto-register
-        cursor.execute('INSERT INTO users (name, email, phone, is_admin) VALUES (?, ?, ?, ?)', ('New User', email, '', 0))
+   
+        cursor.execute('INSERT INTO users (name, email, phone, is_admin) VALUES (?, ?, ?, ?)',
+                       ('New User', email, '', 0))
         db.commit()
         cursor.execute('SELECT * FROM users WHERE email = ?', (email,))
         user = cursor.fetchone()
@@ -169,9 +168,15 @@ def send_otp():
     otp = str(random.randint(100000, 999999))
     expiry = datetime.now() + timedelta(minutes=5)
 
-    cursor.execute('DELETE FROM otp_codes WHERE user_id = ?', (user['id'],))
-    cursor.execute('INSERT INTO otp_codes (user_id, otp_code, expires_at) VALUES (?, ?, ?)', (user['id'], otp, expiry))
-    db.commit()
+    try:
+        cursor.execute('DELETE FROM otp_codes WHERE user_id = ?', (user['id'],))
+        cursor.execute('INSERT INTO otp_codes (user_id, otp_code, expires_at) VALUES (?, ?, ?)',
+                       (user['id'], otp, expiry))
+        db.commit()
+        print(f"✅ OTP stored for user_id={user['id']}: {otp} (expires {expiry})")
+    except Exception as e:
+        print("❌ Failed to store OTP:", e)
+        return jsonify({'status': 'error', 'message': 'Database error while storing OTP'}), 500
 
     try:
         msg = Message('Your OTP Code', sender=app.config['MAIL_USERNAME'], recipients=[email])
@@ -179,7 +184,9 @@ def send_otp():
         mail.send(msg)
         return jsonify({'status': 'success', 'message': 'OTP sent to email'})
     except Exception as e:
+        print("❌ Failed to send email:", e)
         return jsonify({'status': 'error', 'message': str(e)})
+
 
 
 @app.route('/verify-otp', methods=['POST'])
@@ -218,9 +225,7 @@ def verify_otp():
 
     return jsonify({'status': 'success', 'message': 'OTP verified'})
 
-# ----------------------------------------
-# Election Routes
-# ----------------------------------------
+
 
 @app.route('/create-election', methods=['POST'])
 def create_election():
@@ -277,9 +282,7 @@ def get_elections():
     return jsonify({'status': 'success', 'elections': elections})
 
 
-# ----------------------------------------
-# Candidate Routes
-# ----------------------------------------
+
 
 @app.route('/add-candidate', methods=['POST'])
 def add_candidate():
@@ -323,11 +326,9 @@ def get_candidates(election_id):
     candidates = [dict(row) for row in cursor.fetchall()]
     return jsonify({'status': 'success', 'candidates': candidates})
 
-# ----------------------------------------
-# Voting
-# ----------------------------------------
 
-from pytz import timezone  # ✅ Add this at the top of your file
+
+from pytz import timezone  
 
 @app.route('/vote', methods=['POST'])
 def vote():
@@ -364,10 +365,16 @@ def vote():
     start = parse_datetime(election['start_time'])
     end = parse_datetime(election['end_time'])
 
-    # ✅ Use current time in IST (India time)
-    now_ist = datetime.now(timezone('Asia/Kolkata'))
+ 
+    IST = timezone('Asia/Kolkata')
+    if start.tzinfo is None:
+        start = IST.localize(start)
+    if end.tzinfo is None:
+        end = IST.localize(end)
 
-    # ✅ Optional debug logs (remove in production)
+    now_ist = datetime.now(IST)
+
+
     print(f"[DEBUG] start: {start}, end: {end}, now: {now_ist}")
 
     if not (start <= now_ist <= end):
@@ -380,6 +387,7 @@ def vote():
     cursor.execute('INSERT INTO votes (user_id, election_id, candidate_id) VALUES (?, ?, ?)', (user_id, election_id, candidate_id))
     db.commit()
     return jsonify({'status': 'success', 'message': 'Vote submitted'})
+
 
 
 @app.route('/results/<int:election_id>', methods=['GET'])
@@ -400,9 +408,6 @@ def election_results(election_id):
     results = [dict(row) for row in cursor.fetchall()]
     return jsonify({'status': 'success', 'election': election['title'], 'results': results})
 
-# ----------------------------------------
-# User Info
-# ----------------------------------------
 
 @app.route('/user-info', methods=['GET'])
 def user_info():
@@ -420,7 +425,7 @@ def admin_election_votes():
     db = get_db()
     cursor = db.cursor()
 
-    # Fetch all elections
+  
     cursor.execute('SELECT id, title FROM elections')
     elections = cursor.fetchall()
     result = []
@@ -453,7 +458,6 @@ def vote_summary():
     db = get_db()
     cursor = db.cursor()
 
-    # Get all elections
     cursor.execute('SELECT id, title FROM elections')
     elections = cursor.fetchall()
 
@@ -463,11 +467,11 @@ def vote_summary():
         election_id = election['id']
         title = election['title']
 
-        # Count total votes for the election
+        
         cursor.execute('SELECT COUNT(*) as total_votes FROM votes WHERE election_id = ?', (election_id,))
         total_votes = cursor.fetchone()['total_votes']
 
-        # Get vote count per candidate
+      
         cursor.execute('''
             SELECT c.name, c.party, COUNT(v.id) as vote_count
             FROM candidates c
@@ -486,7 +490,7 @@ def vote_summary():
 
     return jsonify({'status': 'success', 'summary': summary})
 
-# ----------------------------------------
+
 
 if __name__ == '__main__':
    port = int(os.environ.get("PORT", 5000))
